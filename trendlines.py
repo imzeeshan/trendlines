@@ -3,18 +3,55 @@ import numpy as np
 import pandas as pd
 import math
 from sklearn.linear_model import LinearRegression
+import datetime
+import yfinance as yf
+import plotly.graph_objects as go
 
 
+# %%
+
+# Adjust the global slopes and threshold values for sensitivity of trendlines
 
 global_slope_up = 0.1
 global_slope_down = -0.1
-threshold_value=0.02
+threshold_value=0.005
 PEAK, VALLEY = 1, -1
+
+# Function to plot the candlestick charts
+# %%
+def plot_candlestick_with_trends(df, trends):
+    fig = go.Figure(data=[go.Candlestick(x=df['Date'],
+
+                open=df['Open'],
+                high=df['High'],
+                low=df['Low'],
+                close=df['Close'])])
+
+    if not trends.empty:
+        for _, row in trends.iterrows():
+            trend_color = 'green' if row['Trend'] == 'Up' else 'red'
+            fig.add_trace(go.Scatter(
+                x=[row['Start Date'], row['End Date']],
+                y=[row['Start Price'], row['End Price']],
+                mode='lines',
+                line=dict(color=trend_color, width=2),
+                name=f"{row['Trend']} Trend"
+            ))
+
+    fig.update_layout(
+        title=f"Candlestick Chart with Trendlines for {tickerSymbol}",
+        xaxis_title="Date",
+        yaxis_title="Price",
+        xaxis_rangeslider_visible=False,
+        
+    )
+
+
+    fig.show()
 
 # %%
 
 def _identify_initial_pivot(X, up_thresh, down_thresh):
-
     x_0 = X[0]
     max_x = x_0
     max_t = 0
@@ -43,13 +80,8 @@ def _identify_initial_pivot(X, up_thresh, down_thresh):
     t_n = len(X)-1
     return VALLEY if x_0 < X[t_n] else PEAK
 
-def peak_valley_pivots_candlestick(df, up_thresh, down_thresh):
-    close = df['Close']
-    high = df['High']
-    low = df['Low']
+def calculate_pivot_points(close, high, low, up_thresh, down_thresh):
 
-    if down_thresh > 0:
-        raise ValueError('The down_thresh must be negative.')
 
     initial_pivot = _identify_initial_pivot(close, up_thresh, down_thresh)
 
@@ -96,7 +128,6 @@ def peak_valley_pivots_candlestick(df, up_thresh, down_thresh):
 
     return pivots
 
-
 # %%
 def find_high_low_type(df):
     prev_high = float('-inf')
@@ -105,8 +136,8 @@ def find_high_low_type(df):
     low_patterns=[]
 
     for index, row in df.iterrows():
-        high = row['high']
-        low = row['low']
+        high = row['High']
+        low = row['Low']
         pivot = row['Pivots']
 
         if pivot == 1:
@@ -155,6 +186,7 @@ def find_downtrend(df):
             df.at[i, 'Trend_Down'] = 'down'    
     return df
 
+
 # %%
 def find_uptrend(df):
     df=df.reset_index()
@@ -172,14 +204,15 @@ def find_uptrend(df):
             df.at[i, 'Trend_Up'] = 'up'    
     return df
 
+
 # %%
 def find_consecutive_up_labels(df_low):
     line_up_data = []
     for i in range(0, len(df_low)-1):
         if df_low['Trend_Up'].iloc[i] == 'up' and df_low['Trend_Up'].iloc[i+1] == 'up':
-            start_timeframe = df_low['trading_date'].iloc[i]
+            start_timeframe = df_low['Date'].iloc[i]
             start_price = df_low['Troughs'].iloc[i]
-            end_timeframe = df_low['trading_date'].iloc[i+1]
+            end_timeframe = df_low['Date'].iloc[i+1]
             end_price = df_low['Troughs'].iloc[i+1]
             line_up_data.append([start_timeframe, start_price, end_timeframe, end_price])
 
@@ -187,22 +220,22 @@ def find_consecutive_up_labels(df_low):
 
     return line_up
 
-
 # %%
 def find_consecutive_down_labels(df_high):
     line_down_data = []  # Collect data in lists
 
     for i in range(0, len(df_high)-1):
         if df_high['Trend_Down'].iloc[i] == 'down' and df_high['Trend_Down'].iloc[i+1] == 'down':
-            start_timeframe = df_high['trading_date'].iloc[i]
+            start_timeframe = df_high['Date'].iloc[i]
             start_price = df_high['Peaks'].iloc[i]
-            end_timeframe = df_high['trading_date'].iloc[i+1]
+            end_timeframe = df_high['Date'].iloc[i+1]
             end_price = df_high['Peaks'].iloc[i+1]
             line_down_data.append([start_timeframe, start_price, end_timeframe, end_price])
 
     line_down = pd.DataFrame(line_down_data, columns=['Start Timeframe', 'Start Price', 'End Timeframe', 'End Price'])
     
     return line_down
+
 
 # %%
 def final_uptrend(df, x_up, y_up):
@@ -211,6 +244,8 @@ def final_uptrend(df, x_up, y_up):
     if len(dates_up) > 0 and len(x_up) == len(y_up):
 
         price_up = np.array(y_up)
+        # If you want to calculate trending lines for minutes instead of days, uncomment the following line and comment the line below it.
+        # t = ((dates_up - dates_up[0]).total_seconds() / 60).values
         t = (dates_up - dates_up[0]).days.values
         time_frame_up = t.reshape(-1, 1)
 
@@ -218,7 +253,7 @@ def final_uptrend(df, x_up, y_up):
         model.fit(time_frame_up, price_up)
 
         slope = model.coef_[0]
-
+        print(f"Slope {slope}")
         c=[] 
         
         for i in range(0, len(dates_up)-1):
@@ -237,7 +272,7 @@ def final_uptrend(df, x_up, y_up):
             price_final_up.append((slope * time_frame_up[i]) + min_c)
 
         price_final_flat_up = np.concatenate(price_final_up, axis=0)
-
+        
         d_line_up = pd.DataFrame({'Date': dates_up, 'Predicted Price': price_final_flat_up})
         up_trend_values = pd.DataFrame({
             'Start Date': d_line_up['Date'].iloc[0],
@@ -245,13 +280,11 @@ def final_uptrend(df, x_up, y_up):
             'End Date': d_line_up['Date'].iloc[-1],
             'End Price': d_line_up['Predicted Price'].iloc[-1],
             'Trend': ['Up'],
-            'Calculated_On': df['trading_date'].iloc[-1],
             })
         return up_trend_values
     else:
         print('Could not detect any up trend lines')
     
-
 
 # %%
 def final_downtrend(df, x_down, y_down):
@@ -261,6 +294,8 @@ def final_downtrend(df, x_down, y_down):
     if len(dates_down) > 0 and len(x_down) == len(y_down):
 
         price_down = np.array(y_down)
+        # If you want to calculate trending lines for minutes instead of days, uncomment the following line and comment the line below it.
+        # t = ((dates_down - dates_down[0]).total_seconds() / 60).values
         t = (dates_down - dates_down[0]).days.values
         
         time_frame_down = t.reshape(-1, 1)
@@ -300,22 +335,18 @@ def final_downtrend(df, x_down, y_down):
             'End Date': d_line_down['Date'].iloc[-1],
             'End Price': d_line_down['Predicted Price'].iloc[-1],
             'Trend': ['Down'],
-            'Calculated_On': df['trading_date'].iloc[-1],
             })
         return down_trend_values
     else:
-        print('Could not detect any up trend lines')
+        print('Could not detect any down trend lines')
     
-        
-
-
+    
 # %%
 def separate_group(df, trend_df, trend_type):
     consecutive_groups = []
     current_group = {'x': [], 'y': []}
     final_trend=pd.DataFrame()
     for i in range(0, len(trend_df) - 1):
-        
         if trend_df['Start Timeframe'].iloc[i] not in current_group['x']:
             current_group['x'].append(trend_df['Start Timeframe'].iloc[i])
         if trend_df['End Timeframe'].iloc[i] not in current_group['x']:
@@ -327,13 +358,10 @@ def separate_group(df, trend_df, trend_type):
         if trend_df.iloc[i]["End Timeframe"] != trend_df.iloc[i + 1]["Start Timeframe"]:
             consecutive_groups.append(current_group)
             current_group = {'x': [], 'y': []}
-            
     current_group['x'].extend([trend_df['Start Timeframe'].iloc[-1], trend_df['End Timeframe'].iloc[-1]])
     current_group['y'].extend([trend_df['Start Price'].iloc[-1], trend_df['End Price'].iloc[-1]])
     consecutive_groups.append(current_group)
-
     for group in consecutive_groups:
-
         if(trend_type == 'up'):
             trend_value = final_uptrend(df, group['x'], group['y'])
         else:
@@ -342,11 +370,13 @@ def separate_group(df, trend_df, trend_type):
         
     return final_trend
 
+
+# %%
+
 # %%
 def initialize_df(df):
-    df.reset_index(inplace=True)
-    
-    pivots = peak_valley_pivots_candlestick(df , threshold_value, -1*threshold_value)
+
+    pivots = calculate_pivot_points(df.Close, df.High, df.Low, threshold_value, -1*threshold_value)
     
     df['Pivots'] = pivots
     df['Pivot Price'] = np.nan 
@@ -355,10 +385,10 @@ def initialize_df(df):
     trend_value = pd.DataFrame()
     
     
-    df.loc[df['Pivots'] == 1, 'Pivot Price'] = df.high
-    df.loc[df['Pivots'] == -1, 'Pivot Price'] = df.low
-    df.loc[df['Pivots'] == 1, 'Peaks'] = df.high
-    df.loc[df['Pivots'] == -1, 'Troughs'] = df.low
+    df.loc[df['Pivots'] == 1, 'Pivot Price'] = df.High
+    df.loc[df['Pivots'] == -1, 'Pivot Price'] = df.Low
+    df.loc[df['Pivots'] == 1, 'Peaks'] = df.High
+    df.loc[df['Pivots'] == -1, 'Troughs'] = df.Low
     find_high_low_type(df)
     
     df_high=df.dropna(subset=['High_pattern'])
@@ -370,7 +400,6 @@ def initialize_df(df):
     uptrend = find_consecutive_up_labels(df_low)
     downtrend = find_consecutive_down_labels(df_high)
 
-
     if len(uptrend) > 0:
         trend_value=pd.concat([trend_value, separate_group(df, uptrend, 'up')])
     if len(downtrend) > 0:
@@ -378,7 +407,24 @@ def initialize_df(df):
     return trend_value
 
 
-# Input your stock dataframe or multiple ones if you like. You can use yfinance or any other libraries to import dataframe and use it accordingly.
-# Just be sure that the function column name matches the name of dataframe's colmuns in the function peak_valley_pivots_candlestick(df, up_thresh, down_thresh)
-trends_df = initialize_df(df)
+
+# %%
+# You can input your own OHLC data. Just be sure the column name matches the inputs of the code.
+tickerSymbol = 'TSLA'
+
+tickerData = yf.Ticker(tickerSymbol)
+todayData = tickerData.history(period='1y', interval = '1d')
+todayData.reset_index(inplace= True)
+# Uncomment the following line if the column name is Datetime instead of Date
+# todayData = todayData.rename(columns={'Datetime': 'Date'})
+
+
+# %%
+trends = initialize_df(todayData)
+
+# Basic Plotly Graph to plot the trend values in a candlestick chart
+# %%
+todayData['Date'] = pd.to_datetime(todayData['Date'])
+plot_candlestick_with_trends(todayData, trends)
+
 
