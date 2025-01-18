@@ -8,12 +8,13 @@ import mysql.connector
 from datetime import datetime
 import logging
 
+# Global Configuration
+LOOKBACK = 60000  # Lookback period for trendline calculations
 
 @dataclass
 class TrendlineCoefficients:
     slope: float
     intercept: float
-
 
 class TrendlineAnalyzer:
     def __init__(self, min_step: float = 0.0001, optimization_step: float = 1.0):
@@ -106,7 +107,7 @@ class TrendlineAnalyzer:
 
     def fit_trendlines_high_low(self, high: np.array, low: np.array,
                                 close: np.array) -> Tuple[TrendlineCoefficients,
-    TrendlineCoefficients]:
+                                                          TrendlineCoefficients]:
         """Fit trendlines using high/low prices."""
         x = np.arange(len(close))
         init_coefs = np.polyfit(x, close, 1)
@@ -122,11 +123,9 @@ class TrendlineAnalyzer:
 
         return support_coefs, resist_coefs
 
-
 class MarketDataAnalyzer:
-    def __init__(self, connection_params: dict, lookback: int = 2000):
+    def __init__(self, connection_params: dict):
         self.connection_params = connection_params
-        self.lookback = lookback
         self.analyzer = TrendlineAnalyzer()
 
     def fetch_data(self, symbol: str, start_date: str) -> pd.DataFrame:
@@ -155,8 +154,8 @@ class MarketDataAnalyzer:
         support_slope = [np.nan] * len(data)
         resist_slope = [np.nan] * len(data)
 
-        for i in range(self.lookback - 1, len(data)):
-            candles = data.iloc[i - self.lookback + 1: i + 1]
+        for i in range(LOOKBACK - 1, len(data)):
+            candles = data.iloc[i - LOOKBACK + 1: i + 1]
             support_coefs, resist_coefs = self.analyzer.fit_trendlines_high_low(
                 candles['high'].values,
                 candles['low'].values,
@@ -169,12 +168,11 @@ class MarketDataAnalyzer:
         data['resist_slope'] = resist_slope
         return data
 
-
 class TrendlinePlotter:
     @staticmethod
-    def plot_trendlines(data: pd.DataFrame, lookback: int):
+    def plot_trendlines(data: pd.DataFrame):
         """Plot candlestick chart with trendlines."""
-        candles = data.iloc[-lookback:]
+        candles = data.iloc[-LOOKBACK:]
         analyzer = TrendlineAnalyzer()
 
         # Calculate trendlines
@@ -221,7 +219,6 @@ class TrendlinePlotter:
         idx = candles.index
         return [(idx[i], line_points[i]) for i in range(len(line_points))]
 
-
 def main():
     # Setup logging
     logging.basicConfig(level=logging.INFO)
@@ -239,12 +236,11 @@ def main():
     market_analyzer = MarketDataAnalyzer(connection_params)
 
     # Fetch and analyze data
-    data = market_analyzer.fetch_data("NQ", "2025-01-16 18:00:00")
+    data = market_analyzer.fetch_data("NQ", "2025-01-01 18:00:00")
     analyzed_data = market_analyzer.calculate_trendlines(data)
 
     # Plot results
-    TrendlinePlotter.plot_trendlines(analyzed_data, market_analyzer.lookback)
-
+    TrendlinePlotter.plot_trendlines(analyzed_data)
 
 if __name__ == "__main__":
     main()
